@@ -19,14 +19,17 @@ column_names = ["Name", "Entries",
                 "No", "Module", "Source"]
 
 class Record(object):
-    def __init__(self, fields):
+    def __init__(self, has_src, fields):
         self.name = fields[0]
         self.module = fields[1]
         self.src = fields[2]
         k = 0
-        if self.src == "<no":
+        if has_src and self.src == "<no":
             self.src = "<no>"
             k = 2
+        elif not has_src:
+            self.src = "<no>"
+            k = -1
         self.no = int(fields[3+k])
         self.entries = int(fields[4+k])
         self.individual_time = float(fields[5+k])
@@ -97,7 +100,7 @@ def get_indent(s):
             break
     return count
 
-def parse_table(f):
+def parse_table(f, has_src):
     result = []
     prev_indent = 0
     prev_record = None
@@ -111,7 +114,7 @@ def parse_table(f):
             line = f.readline()
             continue
         #print(n, indent, fields[0])
-        record = Record(fields)
+        record = Record(has_src, fields)
         if indent > prev_indent:
             prev_record.children.append(record)
             record.parent = prev_record
@@ -141,9 +144,13 @@ def parse_file(f):
     while line:
         fields = line.split()
         if fields == ["COST", "CENTRE", "MODULE", "SRC", "no.", "entries", "%time", "%alloc", "%time", "%alloc"]:
+            has_src = True
+            break
+        if fields == ["COST", "CENTRE", "MODULE", "no.", "entries", "%time", "%alloc", "%time", "%alloc"]:
+            has_src = False
             break
         line = f.readline()
-    return parse_table(f)
+    return parse_table(f, has_src)
 
 def print_table(table):
     def print_record(record, indent):
