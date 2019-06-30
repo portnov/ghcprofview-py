@@ -328,6 +328,22 @@ class FilterModel(QSortFilterProxyModel):
         self.individual_alloc = None
         self.invalidateFilter()
 
+def make_header_menu(tree):
+    def toggle(i):
+        def trigger():
+            hidden = tree.isColumnHidden(i)
+            tree.setColumnHidden(i, not hidden)
+        return trigger
+
+    menu = QMenu(tree)
+    for i, title in enumerate(column_names):
+        action = menu.addAction(title)
+        action.setCheckable(True)
+        action.setChecked(not tree.isColumnHidden(i))
+        action.triggered.connect(toggle(i))
+
+    return menu
+
 class Viewer(QMainWindow):
     def __init__(self, table):
         QMainWindow.__init__(self)
@@ -338,6 +354,8 @@ class Viewer(QMainWindow):
         self.tree.setModel(sorter)
         for col in range(2,8):
             self.tree.setItemDelegateForColumn(col, PercentDelegate(self))
+        self.tree.header().setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.tree.header().customContextMenuRequested.connect(self._on_header_menu)
         self.tree.setSortingEnabled(True)
         self.tree.setAutoExpandDelay(0)
         self.tree.resizeColumnToContents(0)
@@ -431,6 +449,10 @@ class Viewer(QMainWindow):
 
     def _on_reset_filter(self):
         self.sorter.reset()
+
+    def _on_header_menu(self, pos):
+        menu = make_header_menu(self.tree)
+        menu.exec_(self.mapToGlobal(pos))
 
 if __name__ == "__main__":
     path = sys.argv[1]
