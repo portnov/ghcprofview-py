@@ -769,9 +769,13 @@ class Viewer(QMainWindow):
             widget = TreeView(reverse, self)
             self.tabs.addTab(widget, "Reverse search for {}".format(record.name))
 
+        def focus():
+            widget = TreeView(record, self)
+            self.tabs.addTab(widget, "Focus: {}".format(record.name))
+
         menu = QMenu(self)
-        action = menu.addAction("Reverse search")
-        action.triggered.connect(reverse_search)
+        menu.addAction("Focus").triggered.connect(focus)
+        menu.addAction("Reverse search").triggered.connect(reverse_search)
 
         return menu
 
