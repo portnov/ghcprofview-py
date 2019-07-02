@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import sys
+import re
 
 from PyQt5.QtGui import QPainter, QPixmap, QIcon, QStandardItemModel, QStandardItem, QColor
 from PyQt5 import QtCore
@@ -8,9 +9,9 @@ from PyQt5.QtCore import QRect, QSize, Qt, QObject, QTimer, pyqtSignal, QSetting
 from PyQt5.QtWidgets import QApplication, QWidget, QToolBar, QMainWindow, \
         QDialog, QVBoxLayout, QHBoxLayout, QAction, QActionGroup, QLabel, QFileDialog, \
         QFrame, QDockWidget, QMessageBox, QListWidget, QListWidgetItem, QMenu, \
-        QSpinBox, \
+        QSpinBox, QComboBox, \
         QTreeView, QLineEdit, QPushButton, QAbstractItemView, QStyle, \
-        QStyledItemDelegate
+        QStyledItemDelegate, QTabWidget
 
 column_names = ["Name", "Entries",
                 "Time Individual %", "Alloc Individual %",
@@ -19,34 +20,228 @@ column_names = ["Name", "Entries",
                 "No", "Module", "Source"]
 
 class Record(object):
-    def __init__(self, has_src, fields):
-        self.name = fields[0]
-        self.module = fields[1]
-        self.src = fields[2]
-        k = 0
-        if has_src and self.src == "<no":
-            self.src = "<no>"
-            k = 2
-        elif not has_src:
-            self.src = "<no>"
-            k = -1
-        self.no = int(fields[3+k])
-        self.entries = int(fields[4+k])
-        self.individual_time = float(fields[5+k])
-        self.individual_alloc = float(fields[6+k])
-        self.inherited_time = float(fields[7+k])
-        self.inherited_alloc = float(fields[8+k])
+    def __init__(self, id):
+        self.id = id
+        self._row = 0
         self.children = []
+        self.summands = dict()
         self.parent = None
+
+        self.no = 0
+        self.entries = 0
+        self.individual_time = 0
+        self.individual_alloc = 0
 
         self._relative_time = None
         self._relative_alloc = None
+        self._inherited_time = None
+        self._inherited_alloc = None
+
+    @classmethod
+    def parse(cls, id, has_src, fields):
+        record = Record(id)
+
+        record.name = fields[0]
+        record.module = fields[1]
+        record.src = fields[2]
+        k = 0
+        if has_src and record.src == "<no":
+            record.src = "<no>"
+            k = 2
+        elif not has_src:
+            record.src = "<no>"
+            k = -1
+        record.no = int(fields[3+k])
+        record.entries = int(fields[4+k])
+        record.individual_time = float(fields[5+k])
+        record.individual_alloc = float(fields[6+k])
+        record._inherited_time = float(fields[7+k])
+        record._inherited_alloc = float(fields[8+k])
+
+        return record
+
+    @classmethod
+    def new(cls, id, name = None, module = None, src = None, individual_time = None):
+        record = Record(id)
+        if name is None:
+            name = id
+        record.name = name
+        record.module = module
+        record.src = src
+        if individual_time is not None:
+            record.individual_time = individual_time
+        return record
+
+    @classmethod
+    def copy(cls, other):
+        record = Record(other.id)
+        record.name = other.name
+        record.module = other.module
+        record.src = other.src
+        record.no = other.no
+        record.entries = other.entries
+        record.individual_time = other.individual_time
+        record.individual_alloc = other.individual_alloc
+        record._inherited_time = other._inherited_time
+        record._inherited_alloc = other._inherited_alloc
+        return record
+
+    def add_child(self, child):
+        child._row = len(self.children)
+        child.parent = self
+        self.children.append(child)
+
+    def add_children(self, children):
+        for child in children:
+            self.add_child(child)
+
+    def is_sum(self):
+        return len(self.summands) != 0
+
+    def add(self, other):
+        next_id = self.get_max_id([other]) + 1
+        result = Record.new(next_id, self.name, self.module, self.src)
+        result.no = []
+
+        if self.is_sum():
+            result.no.extend(self.no)
+            result.summands = other.summands.copy()
+            #print("add (self): {} + {}".format(result.summands, self.summands))
+            result.summands.update(self.summands)
+        else:
+            result.no.append(self.no)
+            result.summands[self.no] = self
+
+        if other.is_sum():
+            result.no.extend(other.no)
+            result.summands = self.summands.copy()
+            #print("add (other): {} + {}".format(result.summands, other.summands))
+            result.summands.update(other.summands)
+        else:
+            result.no.append(other.no)
+            result.summands[other.no] = other
+
+        result.add_children(self.children + other.children)
+
+        return result
+
+    def _flatten(self):
+        if not self.is_sum():
+            return [self.no], self
+
+        self.individual_time = 0
+        self.individual_alloc = 0
+        self._inherited_time = 0
+        self._inherited_alloc = 0
+        self.entries = 0
+        #self.children = []
+
+        nos = []
+        #print("_flatten: {}: {}".format(self, self.summands))
+        for no in self.summands:
+            n, that = self.summands[no]._flatten()
+            self.entries += that.entries
+            self.individual_time += that.individual_time
+            self.individual_alloc += that.individual_alloc
+            self._inherited_time += that.inherited_time
+            self._inherited_alloc += that.inherited_alloc
+            #self.add_children(that.children)
+            nos.extend(n)
+
+        self.no = nos
+
+        self.summands = dict()
+
+        return self.no, self
+
+    def flatten(self):
+        for child in self.children:
+            child.flatten()
+        self._flatten()
+
+    def get_max_id(self, items=None):
+        result = self.id
+        for child in self.children:
+            m = child.get_max_id()
+            if m > result:
+                result = m
+        if items is not None:
+            for item in items:
+                m = item.get_max_id()
+                if m > result:
+                    result = m
+        return result
+
+    @staticmethod
+    def insert(root, path):
+        if not path:
+            return
+        head = path[0]
+        rest = path[1:]
+        next_child = None
+        new_children = []
+        for child in root.children[:]:
+            if child.is_same_function(head):
+                new_child = child.add(head)
+                new_children.append(new_child)
+                next_child = new_child
+            else:
+                new_children.append(child)
+
+        for i, child in enumerate(new_children):
+            child._row = i
+            child.parent = root
+        root.children = new_children
+
+        if next_child is None:
+            root.add_child(head)
+            next_child = head
+
+        Record.insert(next_child, rest)
+
+    def search(self, needle):
+        if self.is_same_function(needle):
+            copy = Record.copy(self)
+            return [[copy]]
+        paths = []
+        for child in self.children:
+            for sub_path in child.search(needle):
+                copy = Record.copy(self)
+                paths.append([copy] + sub_path)
+        return paths
+
+    def reverse_tree(self, needle):
+        root = Record.new(self.get_max_id()+1, "Root")
+        for path in self.search(needle):
+            Record.insert(root, list(reversed(path[1:])))
+        root.flatten()
+        #print_table([root])
+        return root
 
     def row(self):
         if not self.parent:
             return 0
 
-        return self.parent.children.index(self)
+        return self._row
+        #return self.parent.children.index(self)
+
+    @property
+    def inherited_time(self):
+        if self._inherited_time is None:
+            value = self.individual_time
+            for child in self.children:
+                value += child.inherited_time
+            self._inherited_time = value
+        return self._inherited_time
+
+    @property
+    def inherited_alloc(self):
+        if self._inherited_alloc is None:
+            value = self.individual_alloc
+            for child in self.children:
+                value += child.inherited_alloc
+            self._inherited_alloc = value
+        return self._inherited_alloc
 
     @property
     def relative_time(self):
@@ -66,6 +261,11 @@ class Record(object):
                 self._relative_alloc = round(100 * self.inherited_alloc / self.parent.inherited_alloc, 2)
         return self._relative_alloc
 
+    def is_same_function(self, other):
+        return self.name == other.name and \
+                self.module == other.module and \
+                self.src == other.src
+
     def data(self, col):
         row = [self.name,
                 self.entries,
@@ -82,14 +282,15 @@ class Record(object):
         return row[col]
 
     def __eq__(self, other):
-        return self.name == other.name and \
+        return  self.id == other.id and \
+                self.no == other.no and \
+                self.name == other.name and \
                 self.module == other.module and \
                 self.src == other.src and \
-                self.no == other.no and \
                 self.entries == other.entries
 
     def __repr__(self):
-        return "{}: {} ({})".format(self.name, self.inherited_time, len(self.children))
+        return "[{}] {}: {} ({} children)".format(self._row, self.name, self.individual_time, len(self.children))
 
 def get_indent(s):
     count = 0
@@ -114,9 +315,9 @@ def parse_table(f, has_src):
             line = f.readline()
             continue
         #print(n, indent, fields[0])
-        record = Record(has_src, fields)
+        record = Record.parse(n, has_src, fields)
         if indent > prev_indent:
-            prev_record.children.append(record)
+            prev_record.add_child(record)
             record.parent = prev_record
         else:
             if not prev_record:
@@ -127,7 +328,7 @@ def parse_table(f, has_src):
                     parent = parent.parent
 
                 if parent:
-                    parent.children.append(record)
+                    parent.add_child(record)
                     record.parent = parent
                 else:
                     result.append(record)
@@ -165,6 +366,11 @@ def percent_color(value):
     zero = QColor.fromHsv(111, 100, 190)
     one = QColor.fromHsv(5, 100, 190)
 
+    if value <= 0:
+        return zero
+    if value >= 1:
+        return one
+
     return QColor((1 - value) * zero.red() + value * one.red(),
                   (1 - value) * zero.green() + value * one.green(),
                   (1 - value) * zero.blue() + value * one.blue())
@@ -179,10 +385,15 @@ class PercentDelegate(QStyledItemDelegate):
             painter.fillRect(option.rect, option.palette.base())
 
         value = index.data()
-        w = option.rect.width() * value / 100
-        color = percent_color(value / 100)
+        percent = value
+        if percent is None:
+            percent = 0
+        if percent > 100:
+            percent = 100
+        w = option.rect.width() * percent / 100
+        color = percent_color(percent / 100)
         painter.fillRect(option.rect.x(), option.rect.y(), w, option.rect.height(), color)
-        painter.drawText(option.rect, 0, str(value))
+        painter.drawText(option.rect, 0, str(value) + " %")
         painter.restore()
 
 #     def sizeHint(self, option, index):
@@ -215,6 +426,7 @@ class DataModel(QAbstractItemModel):
         childItem = index.internalPointer()
         parentItem = childItem.parent
         if not parentItem:
+            #print("{}: no parent".format(childItem))
             return QModelIndex()
         return self.createIndex(parentItem.row(), 0, parentItem)
 
@@ -241,12 +453,18 @@ class DataModel(QAbstractItemModel):
             return QVariant()
 
         item = index.internalPointer()
+        #print("data({}, {}) = {}".format(index.row(), index.column(), item))
 
         if role == QtCore.Qt.UserRole:
             return item.data(index.column())
         elif role == QtCore.Qt.DisplayRole:
-            return item.data(index.column())
+            value = item.data(index.column())
+            if isinstance(value, float):
+                value = round(value, 2)
+            return value
         elif role == QtCore.Qt.UserRole + 1:
+            #print("in data")
+            #print("in data: {}".format(item))
             return item
         else:
             return QVariant()
@@ -262,6 +480,7 @@ class DataModel(QAbstractItemModel):
 class FilterModel(QSortFilterProxyModel):
     def __init__(self, parent):
         QSortFilterProxyModel.__init__(self, parent)
+        self.tab = parent
         self.individual_time = None
         self.individual_alloc = None
         self.inherited_time = None
@@ -286,7 +505,20 @@ class FilterModel(QSortFilterProxyModel):
         if self.inherited_alloc is not None and self.inherited_alloc > record.inherited_alloc:
             return False
 
-        if self.name and self.name not in record.name:
+        def good(name):
+            search_type = self.tab.search_type.currentData()
+            if search_type == SEARCH_EXACT:
+                return self.name == name
+            elif search_type == SEARCH_CONTAINS:
+                return self.name in name
+            else:
+                if self.regexp:
+                    return self.regexp.match(name) is not None
+                else:
+                    return True
+
+        if self.name and not good(record.name):
+        #if self.name and self.name not in record.name:
             return False
 
         return True
@@ -321,6 +553,8 @@ class FilterModel(QSortFilterProxyModel):
 
     def setFilter(self, name, individual_time, individual_alloc, inherited_time, inherited_alloc):
         self.name = name
+        if name:
+            self.regexp = re.compile(name)
         self.inherited_time = inherited_time
         self.inherited_alloc = inherited_alloc
         self.individual_time = individual_time
@@ -329,6 +563,7 @@ class FilterModel(QSortFilterProxyModel):
 
     def reset(self):
         self.name = None
+        self.regexp = None
         self.inherited_time = None
         self.inherited_alloc = None
         self.individual_time = None
@@ -351,9 +586,14 @@ def make_header_menu(tree):
 
     return menu
 
-class Viewer(QMainWindow):
-    def __init__(self, table):
-        QMainWindow.__init__(self)
+SEARCH_CONTAINS = 1
+SEARCH_EXACT = 2
+SEARCH_REGEXP = 3
+
+class TreeView(QWidget):
+    def __init__(self, table, parent):
+        QWidget.__init__(self, parent)
+        self.window = parent
         self.tree = QTreeView(self)
         self.model = DataModel(table)
         self.sorter = sorter = FilterModel(self)
@@ -369,12 +609,27 @@ class Viewer(QMainWindow):
         self.tree.expand(self.sorter.index(0,0))
         #self.tree.expandAll()
 
+        self.tree.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._on_tree_menu)
+
         searchbox = QHBoxLayout()
         self.search = QLineEdit(self)
-        btn = QPushButton("&Search", self)
+
         searchbox.addWidget(self.search)
+
+        self.search_type = QComboBox(self)
+        self.search_type.addItem("Contains", SEARCH_CONTAINS)
+        self.search_type.addItem("Exact", SEARCH_EXACT)
+        self.search_type.addItem("Reg.Exp", SEARCH_REGEXP)
+        searchbox.addWidget(self.search_type)
+
+        btn = QPushButton("&Search", self)
         searchbox.addWidget(btn)
         btn.clicked.connect(self._on_search)
+
+        btn = QPushButton("&Next", self)
+        searchbox.addWidget(btn)
+        btn.clicked.connect(self._on_search_next)
 
         filterbox = QHBoxLayout()
 
@@ -421,9 +676,10 @@ class Viewer(QMainWindow):
         vbox.addLayout(searchbox)
         vbox.addLayout(filterbox)
         vbox.addWidget(self.tree)
-        widget = QWidget(self)
-        widget.setLayout(vbox)
-        self.setCentralWidget(widget)
+        self.setLayout(vbox)
+
+        self._search_idxs = None
+        self._search_idx_no = 0
 
     def _expand_to(self, idx):
         idxs = [idx]
@@ -440,16 +696,42 @@ class Viewer(QMainWindow):
     def _on_search(self):
         text = self.search.text()
         selected = self.tree.selectedIndexes()
-        if selected:
-            start = selected[0]
+#         if selected:
+#             start = selected[0]
+#         else:
+        start = self.sorter.index(0,0)
+        search_type = self.search_type.currentData()
+        if search_type == SEARCH_EXACT:
+            method = QtCore.Qt.MatchFixedString 
+        elif search_type == SEARCH_CONTAINS:
+            method = QtCore.Qt.MatchContains
         else:
-            start = self.sorter.index(0,0)
-        idxs = self.sorter.match(start, QtCore.Qt.DisplayRole, text, 1, QtCore.Qt.MatchRecursive | QtCore.Qt.MatchContains | QtCore.Qt.MatchWrap)
+            method = QtCore.Qt.MatchRegExp
+
+        self._search_idxs = idxs = self.sorter.match(start, QtCore.Qt.DisplayRole, text, -1, QtCore.Qt.MatchRecursive | method | QtCore.Qt.MatchWrap)
         if idxs:
-            self.tree.resizeColumnToContents(0)
-            self._expand_to(idxs[0])
-            self.tree.selectionModel().select(idxs[0], QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Current | QItemSelectionModel.Rows)
-            self.tree.scrollTo(idxs[0], QAbstractItemView.PositionAtCenter)
+            print("Found: {}".format(len(idxs)))
+            self._search_idx_no = 0
+            idx = idxs[0]
+            self._locate(idx)
+        else:
+            print("not found")
+
+    def _locate(self, idx):
+        self.tree.resizeColumnToContents(0)
+        self._expand_to(idx)
+        self.tree.selectionModel().select(idx, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Current | QItemSelectionModel.Rows)
+        self.tree.scrollTo(idx, QAbstractItemView.PositionAtCenter)
+
+    def _on_search_next(self):
+        if self._search_idxs:
+            n = len(self._search_idxs)
+            self._search_idx_no = (self._search_idx_no + 1) % n
+            idx = self._search_idxs[self._search_idx_no]
+            print("next: {} / {}".format(self._search_idx_no, n))
+            self._locate(idx)
+        else:
+            print("no search results")
 
     def _on_filter(self):
         self.sorter.setFilter(self.search.text(), self.individual_time.value(), self.individual_alloc.value(), self.inherited_time.value(), self.inherited_alloc.value())
@@ -461,7 +743,54 @@ class Viewer(QMainWindow):
         menu = make_header_menu(self.tree)
         menu.exec_(self.mapToGlobal(pos))
 
+    def _on_tree_menu(self, pos):
+        index = self.tree.indexAt(pos)
+        #print("index: {}".format(index))
+        if index.isValid():
+            record = self.sorter.data(index, QtCore.Qt.UserRole + 1)
+            #print("okay?..")
+            #print("context: {}".format(record))
+            menu = self.window.make_item_menu(self.model, record)
+            menu.exec_(self.tree.viewport().mapToGlobal(pos))
+
+class Viewer(QMainWindow):
+    def __init__(self, table):
+        QMainWindow.__init__(self)
+        self.tabs = QTabWidget(self)
+        main = TreeView(table, self)
+        self.tabs.addTab(main, "All")
+        self.setCentralWidget(self.tabs)
+
+    def make_item_menu(self, model, record):
+        def reverse_search():
+            root = model.record
+            reverse = root.reverse_tree(record)
+
+            widget = TreeView(reverse, self)
+            self.tabs.addTab(widget, "Reverse search for {}".format(record.name))
+
+        menu = QMenu(self)
+        action = menu.addAction("Reverse search")
+        action.triggered.connect(reverse_search)
+
+        return menu
+
 if __name__ == "__main__":
+#     root = Record.new(0, "root", "root", "root")
+#     Record.insert(root, [Record.new(1), Record.new(3)])
+#     Record.insert(root, [Record.new(2), Record.new(4)])
+#     Record.insert(root, [Record.new(2), Record.new(5)])
+#     Record.insert(root, [Record.new(2), Record.new(5), Record.new(6, individual_time=1)])
+#     Record.insert(root, [Record.new(1), Record.new(3), Record.new(6, individual_time=2)])
+#     print_table([root])
+# 
+#     paths = root.search(Record.new(6))
+#     print(paths)
+# 
+#     new_root = Record.new(0, "new_root")
+#     for path in paths:
+#         Record.insert(new_root, list(reversed(path[1:])))
+#     print_table([new_root])
     path = sys.argv[1]
     with open(path) as f:
         table = parse_file(f)
