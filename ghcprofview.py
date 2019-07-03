@@ -2,6 +2,7 @@
 
 import sys
 import re
+import traceback
 
 from PyQt5.QtGui import QPainter, QPixmap, QIcon, QStandardItemModel, QStandardItem, QColor
 from PyQt5 import QtCore
@@ -63,6 +64,7 @@ class Record(object):
     @classmethod
     def new(cls, id, name = None, module = None, src = None, individual_time = None):
         record = Record(id)
+        record.no = id
         if name is None:
             name = id
         record.name = name
@@ -73,7 +75,7 @@ class Record(object):
         return record
 
     @classmethod
-    def copy(cls, other):
+    def copy(cls, other, with_children=False):
         record = Record(other.id)
         record.name = other.name
         record.module = other.module
@@ -84,7 +86,13 @@ class Record(object):
         record.individual_alloc = other.individual_alloc
         record._inherited_time = other._inherited_time
         record._inherited_alloc = other._inherited_alloc
+        if with_children:
+            for child in other.children:
+                record.add_child(Record.copy(child, with_children))
         return record
+
+    def has_child_no(self, no):
+        return no in [child.no for child in self.children]
 
     def add_child(self, child):
         child._row = len(self.children)
@@ -96,32 +104,46 @@ class Record(object):
             self.add_child(child)
 
     def is_sum(self):
-        return len(self.summands) != 0
+        return self.no == [] or len(self.summands) != 0
 
     def add(self, other):
         next_id = self.get_max_id([other]) + 1
         result = Record.new(next_id, self.name, self.module, self.src)
-        result.no = []
 
         if self.is_sum():
-            result.no.extend(self.no)
             result.summands = other.summands.copy()
             #print("add (self): {} + {}".format(result.summands, self.summands))
             result.summands.update(self.summands)
         else:
-            result.no.append(self.no)
             result.summands[self.no] = self
 
         if other.is_sum():
-            result.no.extend(other.no)
-            result.summands = self.summands.copy()
+            result.summands.update(self.summands.copy())
             #print("add (other): {} + {}".format(result.summands, other.summands))
             result.summands.update(other.summands)
         else:
-            result.no.append(other.no)
-            result.summands[other.no] = other
+            if other.no not in result.summands:
+                result.summands[other.no] = other
 
-        result.add_children(self.children + other.children)
+        result.no = tuple(result.summands.keys())
+
+        if len(result.no) == 1 and len(result.summands) == 1:
+            return result.summands[result.no[0]]
+
+        children = self.children + other.children
+        new_children = []
+        for child in children:
+            new_child = None
+            for existing_child in new_children:
+                if existing_child.is_same_function(child):
+                    new_child = existing_child.add(child)
+                    break
+
+            if new_child is None:
+                new_child = child
+            new_children.append(new_child)
+
+        result.add_children(new_children)
 
         return result
 
@@ -137,7 +159,6 @@ class Record(object):
         #self.children = []
 
         nos = []
-        #print("_flatten: {}: {}".format(self, self.summands))
         for no in self.summands:
             n, that = self.summands[no]._flatten()
             self.entries += that.entries
@@ -147,8 +168,12 @@ class Record(object):
             self._inherited_alloc += that.inherited_alloc
             #self.add_children(that.children)
             nos.extend(n)
+        nos = tuple(nos)
 
-        self.no = nos
+        if len(nos) == 1:
+            self.no = nos[0]
+        else:
+            self.no = nos
 
         self.summands = dict()
 
@@ -174,46 +199,78 @@ class Record(object):
 
     @staticmethod
     def insert(root, path):
-        if not path:
-            return
-        head = path[0]
-        rest = path[1:]
-        next_child = None
-        new_children = []
-        for child in root.children[:]:
-            if child.is_same_function(head):
-                new_child = child.add(head)
-                new_children.append(new_child)
-                next_child = new_child
-            else:
-                new_children.append(child)
+        def go(root, path, depth):
+            if not path:
+                return
+            head = path[0]
+            rest = path[1:]
+            next_child = None
+            new_children = []
+            for i, child in enumerate(root.children[:]):
+                if child.is_same_function(head):
+                    new_child = child.add(head)
+                    new_children.append(new_child)
+                    next_child = new_child
+                else:
+                    new_children.append(child)
 
-        for i, child in enumerate(new_children):
-            child._row = i
-            child.parent = root
-        root.children = new_children
+            assert len(new_children) == len(root.children)
+            for i, child in enumerate(new_children):
+                child._row = i
+                child.parent = root
+            root.children = new_children
 
-        if next_child is None:
-            root.add_child(head)
-            next_child = head
+            if next_child is None:
+                root.add_child(head)
+                next_child = head
 
-        Record.insert(next_child, rest)
+            go(next_child, rest, depth+1)
 
-    def search(self, needle):
+        go(root, path, 0)
+
+    def get_all_paths(self):
+        me = Record.copy(self)
+        paths = []
+        if not self.children:
+            return [[me]]
+        for child in self.children:
+            for child_path in child.get_all_paths():
+                paths.append([me] + child_path)
+        return paths
+
+    def search_paths(self, needle, with_children=False):
         if self.is_same_function(needle):
-            copy = Record.copy(self)
+            copy = Record.copy(self, with_children)
             return [[copy]]
         paths = []
         for child in self.children:
-            for sub_path in child.search(needle):
-                copy = Record.copy(self)
+            for sub_path in child.search_paths(needle, with_children):
+                copy = Record.copy(self, with_children)
                 paths.append([copy] + sub_path)
         return paths
 
+    def search(self, needle):
+        results = []
+        if self.is_same_function(needle):
+            results.append(self)
+        for child in self.children:
+            sub_results = child.search(needle)
+            results.extend(sub_results)
+        return results
+
     def reverse_tree(self, needle):
         root = Record.new(self.get_max_id()+1, "Root")
-        for path in self.search(needle):
+        for path in self.search_paths(needle):
             Record.insert(root, list(reversed(path[1:])))
+        root.flatten()
+        #print_table([root])
+        return root
+
+    def forward_tree(self, needle):
+        root = Record.new(self.get_max_id()+1, "Root")
+        for item in self.search(needle):
+            for sub_path in item.get_all_paths():
+                Record.insert(root, sub_path)
         root.flatten()
         #print_table([root])
         return root
@@ -290,7 +347,7 @@ class Record(object):
                 self.entries == other.entries
 
     def __repr__(self):
-        return "[{}] {}: {} ({} children)".format(self._row, self.name, self.individual_time, len(self.children))
+        return "[{}] {}: {} ({} children)".format(self.no, self.name, self.individual_time, len(self.children))
 
 def get_indent(s):
     count = 0
@@ -461,6 +518,8 @@ class DataModel(QAbstractItemModel):
             value = item.data(index.column())
             if isinstance(value, float):
                 value = round(value, 2)
+            if not isinstance(value, (int, float, str)):
+                value = str(value)
             return value
         elif role == QtCore.Qt.UserRole + 1:
             #print("in data")
@@ -767,34 +826,41 @@ class Viewer(QMainWindow):
             reverse = root.reverse_tree(record)
 
             widget = TreeView(reverse, self)
-            self.tabs.addTab(widget, "Reverse search for {}".format(record.name))
+            self.tabs.addTab(widget, "Calls to {}".format(record.name))
+
+        def forward_search():
+            root = model.record
+            tree = root.forward_tree(record)
+
+            widget = TreeView(tree, self)
+            self.tabs.addTab(widget, "Calls of {}".format(record.name))
 
         def focus():
-            widget = TreeView(record, self)
+            root = Record.new(record.get_max_id(), "Root")
+            root.add_child(record)
+            widget = TreeView(root, self)
             self.tabs.addTab(widget, "Focus: {}".format(record.name))
 
         menu = QMenu(self)
-        menu.addAction("Focus").triggered.connect(focus)
-        menu.addAction("Reverse search").triggered.connect(reverse_search)
+        menu.addAction("Narrow view to this item").triggered.connect(focus)
+        menu.addAction("Find in forward calls").triggered.connect(forward_search)
+        menu.addAction("Find in reverse calls").triggered.connect(reverse_search)
 
         return menu
 
 if __name__ == "__main__":
 #     root = Record.new(0, "root", "root", "root")
-#     Record.insert(root, [Record.new(1), Record.new(3)])
-#     Record.insert(root, [Record.new(2), Record.new(4)])
-#     Record.insert(root, [Record.new(2), Record.new(5)])
-#     Record.insert(root, [Record.new(2), Record.new(5), Record.new(6, individual_time=1)])
-#     Record.insert(root, [Record.new(1), Record.new(3), Record.new(6, individual_time=2)])
+#     Record.insert(root, [Record.new(1), Record.new(4), Record.new(51, name="5")])
+#     Record.insert(root, [Record.new(2), Record.new(4), Record.new(52, name="5")])
+#     Record.insert(root, [Record.new(7), Record.new(4), Record.new(60)])
+#     Record.insert(root, [Record.new(3), Record.new(4), Record.new(53, name="5")])
+#     Record.insert(root, [Record.new(3), Record.new(4), Record.new(54, name="5")])
+#     root.flatten()
 #     print_table([root])
 # 
-#     paths = root.search(Record.new(6))
-#     print(paths)
-# 
-#     new_root = Record.new(0, "new_root")
-#     for path in paths:
-#         Record.insert(new_root, list(reversed(path[1:])))
+#     new_root = root.forward_tree(Record.new(4))
 #     print_table([new_root])
+
     path = sys.argv[1]
     with open(path) as f:
         table = parse_file(f)
