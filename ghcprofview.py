@@ -769,28 +769,29 @@ class TreeView(QWidget):
 
         self._search_idxs = idxs = self.sorter.match(start, QtCore.Qt.DisplayRole, text, -1, QtCore.Qt.MatchRecursive | method | QtCore.Qt.MatchWrap)
         if idxs:
-            print("Found: {}".format(len(idxs)))
+            self.window.statusBar().showMessage("Found: {} occurence(s)".format(len(idxs)))
             self._search_idx_no = 0
             idx = idxs[0]
             self._locate(idx)
         else:
-            print("not found")
+            self.window.statusBar().showMessage("Not found")
 
     def _locate(self, idx):
         self.tree.resizeColumnToContents(0)
         self._expand_to(idx)
-        self.tree.selectionModel().select(idx, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Current | QItemSelectionModel.Rows)
-        self.tree.scrollTo(idx, QAbstractItemView.PositionAtCenter)
+        self.tree.setCurrentIndex(idx)
+        #self.tree.selectionModel().select(idx, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Current | QItemSelectionModel.Rows)
+        #self.tree.scrollTo(idx, QAbstractItemView.PositionAtCenter)
 
     def _on_search_next(self):
         if self._search_idxs:
             n = len(self._search_idxs)
             self._search_idx_no = (self._search_idx_no + 1) % n
             idx = self._search_idxs[self._search_idx_no]
-            print("next: {} / {}".format(self._search_idx_no, n))
+            self.window.statusBar().showMessage("Occurence {} of {}".format(self._search_idx_no, n))
             self._locate(idx)
         else:
-            print("no search results")
+            self.window.statusBar().showMessage("No search results")
 
     def _on_filter(self):
         self.sorter.setFilter(self.search.text(), self.individual_time.value(), self.individual_alloc.value(), self.inherited_time.value(), self.inherited_alloc.value())
@@ -819,6 +820,7 @@ class Viewer(QMainWindow):
         main = TreeView(table, self)
         self.tabs.addTab(main, "All")
         self.setCentralWidget(self.tabs)
+        self.statusBar().showMessage("Ready.")
 
     def make_item_menu(self, model, record):
         def reverse_search():
@@ -839,12 +841,12 @@ class Viewer(QMainWindow):
             root = Record.new(record.get_max_id(), "Root")
             root.add_child(record)
             widget = TreeView(root, self)
-            self.tabs.addTab(widget, "Focus: {}".format(record.name))
+            self.tabs.addTab(widget, "Narrowed view: {}".format(record.name))
 
         menu = QMenu(self)
         menu.addAction("Narrow view to this item").triggered.connect(focus)
-        menu.addAction("Find in forward calls").triggered.connect(forward_search)
-        menu.addAction("Find in reverse calls").triggered.connect(reverse_search)
+        menu.addAction("Group all outgoing calls").triggered.connect(forward_search)
+        menu.addAction("Group all incoming calls").triggered.connect(reverse_search)
 
         return menu
 
