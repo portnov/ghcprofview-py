@@ -2,6 +2,7 @@
 
 import sys
 import re
+import json
 import traceback
 
 from PyQt5.QtGui import QPainter, QPixmap, QIcon, QStandardItemModel, QStandardItem, QColor
@@ -27,11 +28,15 @@ class Record(object):
         self.children = []
         self.summands = dict()
         self.parent = None
+        self.is_caf = False
 
         self.no = 0
         self.entries = 0
         self.individual_time = 0
         self.individual_alloc = 0
+
+        self.ticks = None
+        self.alloc = None
 
         self._relative_time = None
         self._relative_alloc = None
@@ -39,10 +44,11 @@ class Record(object):
         self._inherited_alloc = None
 
     @classmethod
-    def parse(cls, id, has_src, fields):
+    def from_text(cls, id, has_src, fields):
         record = Record(id)
 
         record.name = fields[0]
+        record.is_caf = record.name.startswith('CAF:')
         record.module = fields[1]
         record.src = fields[2]
         k = 0
@@ -59,6 +65,69 @@ class Record(object):
         record._inherited_time = float(fields[7+k])
         record._inherited_alloc = float(fields[8+k])
 
+        return record
+
+    @classmethod
+    def _cost_centres(cls, data):
+        centres = data['cost_centres']
+        return dict((centre['id'], centre) for centre in centres)
+
+    @classmethod
+    def _json_profile(cls, ccs, profile, id):
+        record = Record(id)
+        next_id = id + 1
+        no = profile['id']
+        record.no = no
+        record.ticks = profile['ticks']
+        record.alloc = profile['alloc']
+        record.entries = profile['entries']
+
+        cc = ccs[no]
+        record.name = cc['label']
+        record.module = cc['module']
+        record.src = cc['src_loc']
+        record.is_caf = cc['is_caf']
+
+        for child_json in profile['children']:
+            next_id, child_record = Record._json_profile(ccs, child_json, next_id)
+            if not child_record.is_ignored_cc():
+                record.add_child(child_record)
+
+        return next_id, record
+
+    def _calc_totals(self):
+        if self.is_ignored_cc():
+            total_ticks = 0
+            total_alloc = 0
+        else:
+            total_ticks = self.ticks
+            total_alloc = self.alloc
+        for child in self.children:
+            child_ticks, child_alloc = child._calc_totals()
+            total_ticks += child_ticks
+            total_alloc += child_alloc
+        return total_ticks, total_alloc
+
+    def _update_totals(self, total_ticks, total_alloc):
+        self.individual_time = 100 * float(self.ticks) / total_ticks
+        self.individual_alloc = 100 * float(self.alloc) / total_alloc
+
+        for child in self.children:
+            child._update_totals(total_ticks, total_alloc)
+
+        self._inherited_time = self.calc_inherited_time()
+        self._inherited_alloc = self.calc_inherited_alloc()
+
+    @classmethod
+    def from_json(cls, data):
+        total_ticks = data['total_ticks']
+        total_alloc = data['total_alloc']
+        cost_centres = Record._cost_centres(data)
+        profile = data['profile']
+        _, record = Record._json_profile(cost_centres, profile, 0)
+        #total_ticks, total_alloc = record._calc_totals()
+        #print(total_ticks, total_alloc)
+        record._update_totals(float(total_ticks), float(total_alloc))
         return record
 
     @classmethod
@@ -84,8 +153,10 @@ class Record(object):
         record.entries = other.entries
         record.individual_time = other.individual_time
         record.individual_alloc = other.individual_alloc
-        record._inherited_time = other._inherited_time
-        record._inherited_alloc = other._inherited_alloc
+        record._inherited_time = other.inherited_time
+        record._inherited_alloc = other.inherited_alloc
+        record.ticks = other.ticks
+        record.alloc = other.alloc
         if with_children:
             for child in other.children:
                 record.add_child(Record.copy(child, with_children))
@@ -107,7 +178,7 @@ class Record(object):
         return self.no == [] or len(self.summands) != 0
 
     def add(self, other):
-        next_id = self.get_max_id([other]) + 1
+        next_id = hash(str(self.no) + str(other.no))
         result = Record.new(next_id, self.name, self.module, self.src)
 
         if self.is_sum():
@@ -155,9 +226,13 @@ class Record(object):
         self.individual_alloc = 0
         self._inherited_time = 0
         self._inherited_alloc = 0
+        self.ticks = 0
+        self.alloc = 0
         self.entries = 0
         #self.children = []
 
+        if self.name == "scoreAB.iterateMoves":
+            print(f"time {self.inherited_time}")
         nos = []
         for no in self.summands:
             n, that = self.summands[no]._flatten()
@@ -166,6 +241,8 @@ class Record(object):
             self.individual_alloc += that.individual_alloc
             self._inherited_time += that.inherited_time
             self._inherited_alloc += that.inherited_alloc
+            self.ticks += that.ticks
+            self.alloc += that.alloc
             #self.add_children(that.children)
             nos.extend(n)
         nos = tuple(nos)
@@ -282,22 +359,45 @@ class Record(object):
         return self._row
         #return self.parent.children.index(self)
 
+    def is_ignored_cc(self):
+        return False
+        # See rts/Profiling.c from GHC source
+#         return self.name in [
+#                 'OVERHEAD_of',
+#                 'DONT_CARE',
+#                 'GC',
+#                 'SYSTEM',
+#                 'IDLE'
+#             ]
+
+    def calc_inherited_time(self):
+        if self.is_ignored_cc():
+            value = 0
+        else:
+            value = self.individual_time
+        for child in self.children:
+            value += child.inherited_time
+        return value
+
     @property
     def inherited_time(self):
         if self._inherited_time is None:
-            value = self.individual_time
-            for child in self.children:
-                value += child.inherited_time
-            self._inherited_time = value
+            self._inherited_time = self.calc_inherited_time()
         return self._inherited_time
+
+    def calc_inherited_alloc(self):
+        if self.is_ignored_cc():
+            value = 0
+        else:
+            value = self.individual_alloc
+        for child in self.children:
+            value += child.inherited_alloc
+        return value
 
     @property
     def inherited_alloc(self):
         if self._inherited_alloc is None:
-            value = self.individual_alloc
-            for child in self.children:
-                value += child.inherited_alloc
-            self._inherited_alloc = value
+            self._inherited_alloc = self.calc_inherited_alloc()
         return self._inherited_alloc
 
     @property
@@ -358,7 +458,7 @@ def get_indent(s):
             break
     return count
 
-def parse_table(f, has_src):
+def parse_text_table(f, has_src):
     result = []
     prev_indent = 0
     prev_record = None
@@ -372,23 +472,24 @@ def parse_table(f, has_src):
             line = f.readline()
             continue
         #print(n, indent, fields[0])
-        record = Record.parse(n, has_src, fields)
-        if indent > prev_indent:
-            prev_record.add_child(record)
-            record.parent = prev_record
-        else:
-            if not prev_record:
-                result.append(record)
+        record = Record.from_text(n, has_src, fields)
+        if not record.is_ignored_cc():
+            if indent > prev_indent:
+                prev_record.add_child(record)
+                record.parent = prev_record
             else:
-                parent = prev_record.parent
-                for k in range(prev_indent - indent):
-                    parent = parent.parent
-
-                if parent:
-                    parent.add_child(record)
-                    record.parent = parent
-                else:
+                if not prev_record:
                     result.append(record)
+                else:
+                    parent = prev_record.parent
+                    for k in range(prev_indent - indent):
+                        parent = parent.parent
+
+                    if parent:
+                        parent.add_child(record)
+                        record.parent = parent
+                    else:
+                        result.append(record)
 
         prev_record = record
         prev_indent = indent
@@ -397,8 +498,16 @@ def parse_table(f, has_src):
 
     return result
 
+def parse_json(f):
+    data = json.load(f)
+    root = Record.from_json(data)
+    return [root]
+
 def parse_file(f):
     line = f.readline()
+    if line.strip() == "{":
+        f.seek(0)
+        return parse_json(f)
     while line:
         fields = line.split()
         if fields == ["COST", "CENTRE", "MODULE", "SRC", "no.", "entries", "%time", "%alloc", "%time", "%alloc"]:
@@ -408,7 +517,7 @@ def parse_file(f):
             has_src = False
             break
         line = f.readline()
-    return parse_table(f, has_src)
+    return parse_text_table(f, has_src)
 
 def print_table(table):
     def print_record(record, indent):
