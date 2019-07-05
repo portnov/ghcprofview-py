@@ -302,22 +302,26 @@ class Record(object):
             self._inherited_alloc = value
         return self._inherited_alloc
 
+    def _calc_percent(self, parent, value):
+        if parent is None:
+            return None
+        if value > parent:
+            value, parent = parent, value
+        if parent == 0:
+            return None
+
+        return round(100 * value / parent, 2)
+
     @property
     def relative_time(self):
         if self._relative_time is None:
-            if self.parent is None or self.parent.inherited_time == 0:
-                self._relative_time = 100
-            else:
-                self._relative_time = round(100 * self.inherited_time / self.parent.inherited_time, 2)
+            self._relative_time = self._calc_percent(self.parent.inherited_time, self.inherited_time)
         return self._relative_time
 
     @property
     def relative_alloc(self):
         if self._relative_alloc is None:
-            if self.parent is None or self.parent.inherited_alloc == 0:
-                self._relative_alloc = 100
-            else:
-                self._relative_alloc = round(100 * self.inherited_alloc / self.parent.inherited_alloc, 2)
+            self._relative_alloc = self._calc_percent(self.parent.inherited_alloc, self.inherited_alloc)
         return self._relative_alloc
 
     def is_same_function(self, other):
@@ -436,14 +440,17 @@ def percent_color(value):
 
 class PercentDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
-        #QStyledItemDelegate.paint(self, painter, option, index)
+        value = index.data()
+        if not isinstance(value, float):
+            QStyledItemDelegate.paint(self, painter, option, index)
+            return
+
         painter.save()
         if option.state & QStyle.State_Selected:
             painter.fillRect(option.rect, option.palette.highlight())
         else:
             painter.fillRect(option.rect, option.palette.base())
 
-        value = index.data()
         percent = value
         if percent is None:
             percent = 0
@@ -520,7 +527,7 @@ class DataModel(QAbstractItemModel):
             value = item.data(index.column())
             if isinstance(value, float):
                 value = round(value, 2)
-            if not isinstance(value, (int, float, str)):
+            if not isinstance(value, (int, float, str)) and value is not None:
                 value = str(value)
             return value
         elif role == QtCore.Qt.UserRole + 1:
