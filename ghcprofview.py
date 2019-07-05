@@ -14,11 +14,13 @@ from PyQt5.QtWidgets import QApplication, QWidget, QToolBar, QMainWindow, \
         QTreeView, QLineEdit, QPushButton, QAbstractItemView, QStyle, \
         QStyledItemDelegate, QTabWidget
 
-column_names = ["Name", "Entries",
+NAME_COLUMN = 1
+
+column_names = ["No", "Name", "Entries",
                 "Time Individual %", "Alloc Individual %",
                 "Time Inherited %", "Alloc Inherited %",
                 "Time Relative %", "Alloc Relative %",
-                "No", "Module", "Source"]
+                "Module", "Source"]
 
 class Record(object):
     def __init__(self, id):
@@ -324,7 +326,8 @@ class Record(object):
                 self.src == other.src
 
     def data(self, col):
-        row = [self.name,
+        row = [self.no,
+                self.name,
                 self.entries,
                 self.individual_time,
                 self.individual_alloc,
@@ -332,7 +335,6 @@ class Record(object):
                 self.inherited_alloc,
                 self.relative_time,
                 self.relative_alloc,
-                self.no,
                 self.module,
                 self.src
             ]
@@ -547,7 +549,7 @@ class FilterModel(QSortFilterProxyModel):
         self.name = None
 
     def check(self, sourceRow, sourceParent):
-        idx = self.sourceModel().index(sourceRow, 0, sourceParent)
+        idx = self.sourceModel().index(sourceRow, NAME_COLUMN, sourceParent)
         if not idx.isValid():
             return False
         record = self.sourceModel().data(idx, QtCore.Qt.UserRole + 1)
@@ -581,6 +583,14 @@ class FilterModel(QSortFilterProxyModel):
             return False
 
         return True
+    
+    def check_name(self, search_type, needle, name):
+        if search_type == SEARCH_EXACT:
+            return needle == name
+        elif search_type == SEARCH_CONTAINS:
+            return needle in name
+        else:
+            return re.compile(needle).match(name) is not None
 
     def filterAcceptsRow(self, sourceRow, sourceParent):
         if self.check(sourceRow, sourceParent):
@@ -598,7 +608,7 @@ class FilterModel(QSortFilterProxyModel):
         return False
 
     def hasAcceptedChildren(self, sourceRow, sourceParent):
-        item = self.sourceModel().index(sourceRow, 0, sourceParent)
+        item = self.sourceModel().index(sourceRow, NAME_COLUMN, sourceParent)
         if not item.isValid():
             return False
 
@@ -629,6 +639,32 @@ class FilterModel(QSortFilterProxyModel):
         self.individual_alloc = None
         self.invalidateFilter()
 
+    def search(self, start, value, search_type):
+        result = []
+        p = self.parent(start)
+        row_from = start.row()
+        row_to = self.rowCount(p)
+
+        for i in range(2):
+            for r in range(row_from, row_to):
+                idx = self.index(r, NAME_COLUMN, p)
+                if not idx.isValid():
+                    continue
+                v = self.data(idx, QtCore.Qt.DisplayRole)
+                if self.check_name(search_type, value, v):
+                    result.append(idx)
+
+                tree_idx = self.index(r, 0, p)
+                if self.hasChildren(tree_idx):
+                    sub_start = self.index(0, 0, tree_idx)
+                    sub = self.search(sub_start, value, search_type)
+                    result.extend(sub)
+
+            row_from = 0
+            row_to = start.row()
+
+        return result
+
 def make_header_menu(tree):
     def toggle(i):
         def trigger():
@@ -654,17 +690,21 @@ class TreeView(QWidget):
         QWidget.__init__(self, parent)
         self.window = parent
         self.tree = QTreeView(self)
+        indent = self.tree.indentation()
+        self.tree.setIndentation(indent / 2)
+
         self.model = DataModel(table)
         self.sorter = sorter = FilterModel(self)
         sorter.setSourceModel(self.model)
         self.tree.setModel(sorter)
-        for col in range(2,8):
+        for col in range(3,9):
             self.tree.setItemDelegateForColumn(col, PercentDelegate(self))
         self.tree.header().setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.tree.header().customContextMenuRequested.connect(self._on_header_menu)
         self.tree.setSortingEnabled(True)
         self.tree.setAutoExpandDelay(0)
         self.tree.resizeColumnToContents(0)
+        self.tree.resizeColumnToContents(NAME_COLUMN)
         self.tree.expand(self.sorter.index(0,0))
         #self.tree.expandAll()
 
@@ -758,7 +798,7 @@ class TreeView(QWidget):
 #         if selected:
 #             start = selected[0]
 #         else:
-        start = self.sorter.index(0,0)
+        start = self.sorter.index(0,NAME_COLUMN)
         search_type = self.search_type.currentData()
         if search_type == SEARCH_EXACT:
             method = QtCore.Qt.MatchFixedString 
@@ -767,7 +807,7 @@ class TreeView(QWidget):
         else:
             method = QtCore.Qt.MatchRegExp
 
-        self._search_idxs = idxs = self.sorter.match(start, QtCore.Qt.DisplayRole, text, -1, QtCore.Qt.MatchRecursive | method | QtCore.Qt.MatchWrap)
+        self._search_idxs = idxs = self.sorter.search(start, text, search_type)
         if idxs:
             self.window.statusBar().showMessage("Found: {} occurence(s)".format(len(idxs)))
             self._search_idx_no = 0
@@ -778,6 +818,7 @@ class TreeView(QWidget):
 
     def _locate(self, idx):
         self.tree.resizeColumnToContents(0)
+        self.tree.resizeColumnToContents(NAME_COLUMN)
         self._expand_to(idx)
         self.tree.setCurrentIndex(idx)
         #self.tree.selectionModel().select(idx, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Current | QItemSelectionModel.Rows)
