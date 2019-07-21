@@ -19,5 +19,9 @@ GHC `.prof` files viewer, implemented in Python + Qt5. Synopsis:
   on combination of fields: Name, Time Individual, Alloc Individual, Time
   Inherited, Alloc Inherited.
 
-![Screenshot](https://user-images.githubusercontent.com/284644/60400312-76f46b80-9b8b-11e9-8ce3-c1c2136cedab.png)
+See also `ghcprofview` implementation in Haskell - [ghcprofview-hs][1].
+
+[1]: https://github.com/portnov/ghcprofview-hs
+
+![Screenshot](https://user-images.githubusercontent.com/284644/61595379-e4863b80-ac0f-11e9-9263-01e54211fedc.png)
 
