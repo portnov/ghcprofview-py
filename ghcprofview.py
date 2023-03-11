@@ -851,7 +851,7 @@ class TreeView(QWidget):
 
     def _on_header_menu(self, pos):
         menu = make_header_menu(self.tree)
-        menu.exec_(self.mapToGlobal(pos))
+        menu.exec(self.mapToGlobal(pos))
 
     def _on_tree_menu(self, pos):
         index = self.tree.indexAt(pos)
@@ -861,7 +861,7 @@ class TreeView(QWidget):
             #print("okay?..")
             #print("context: {}".format(record))
             menu = self.window.make_item_menu(self.model, record)
-            menu.exec_(self.tree.viewport().mapToGlobal(pos))
+            menu.exec(self.tree.viewport().mapToGlobal(pos))
 
 class Viewer(QMainWindow):
     def __init__(self, table):
@@ -921,5 +921,5 @@ if __name__ == "__main__":
     window = Viewer(table[0])
     window.show()
 
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
 
