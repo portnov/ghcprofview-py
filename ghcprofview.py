@@ -3,12 +3,14 @@
 import sys
 import re
 import traceback
+import math
 
-from PyQt5.QtGui import QPainter, QPixmap, QIcon, QStandardItemModel, QStandardItem, QColor
-from PyQt5 import QtCore
-from PyQt5.QtCore import QRect, QSize, Qt, QObject, QTimer, pyqtSignal, QSettings, QModelIndex, QVariant, QAbstractItemModel, QSortFilterProxyModel, QItemSelectionModel
-from PyQt5.QtWidgets import QApplication, QWidget, QToolBar, QMainWindow, \
-        QDialog, QVBoxLayout, QHBoxLayout, QAction, QActionGroup, QLabel, QFileDialog, \
+from PyQt6.QtGui import QPainter, QPixmap, QIcon, QStandardItemModel, QStandardItem, QColor, \
+        QAction, QActionGroup
+from PyQt6 import QtCore
+from PyQt6.QtCore import QRect, QSize, Qt, QObject, QTimer, pyqtSignal, QSettings, QModelIndex, QVariant, QAbstractItemModel, QSortFilterProxyModel, QItemSelectionModel
+from PyQt6.QtWidgets import QApplication, QWidget, QToolBar, QMainWindow, \
+        QDialog, QVBoxLayout, QHBoxLayout, QLabel, QFileDialog, \
         QFrame, QDockWidget, QMessageBox, QListWidget, QListWidgetItem, QMenu, \
         QSpinBox, QComboBox, \
         QTreeView, QLineEdit, QPushButton, QAbstractItemView, QStyle, \
@@ -434,9 +436,9 @@ def percent_color(value):
     if value >= 1:
         return one
 
-    return QColor((1 - value) * zero.red() + value * one.red(),
-                  (1 - value) * zero.green() + value * one.green(),
-                  (1 - value) * zero.blue() + value * one.blue())
+    return QColor(math.floor((1 - value) * zero.red() + value * one.red()),
+                  math.floor((1 - value) * zero.green() + value * one.green()),
+                  math.floor((1 - value) * zero.blue() + value * one.blue()))
 
 class PercentDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
@@ -446,7 +448,7 @@ class PercentDelegate(QStyledItemDelegate):
             return
 
         painter.save()
-        if option.state & QStyle.State_Selected:
+        if option.state & QStyle.StateFlag.State_Selected:
             painter.fillRect(option.rect, option.palette.highlight())
         else:
             painter.fillRect(option.rect, option.palette.base())
@@ -456,7 +458,7 @@ class PercentDelegate(QStyledItemDelegate):
             percent = 0
         if percent > 100:
             percent = 100
-        w = option.rect.width() * percent / 100
+        w = math.floor(option.rect.width() * percent / 100)
         color = percent_color(percent / 100)
         painter.fillRect(option.rect.x(), option.rect.y(), w, option.rect.height(), color)
         painter.drawText(option.rect, 0, str(value) + " %")
@@ -521,16 +523,16 @@ class DataModel(QAbstractItemModel):
         item = index.internalPointer()
         #print("data({}, {}) = {}".format(index.row(), index.column(), item))
 
-        if role == QtCore.Qt.UserRole:
+        if role == QtCore.Qt.ItemDataRole.UserRole:
             return item.data(index.column())
-        elif role == QtCore.Qt.DisplayRole:
+        elif role == QtCore.Qt.ItemDataRole.DisplayRole:
             value = item.data(index.column())
             if isinstance(value, float):
                 value = round(value, 2)
             if not isinstance(value, (int, float, str)) and value is not None:
                 value = str(value)
             return value
-        elif role == QtCore.Qt.UserRole + 1:
+        elif role == QtCore.Qt.ItemDataRole.UserRole + 1:
             #print("in data")
             #print("in data: {}".format(item))
             return item
@@ -538,7 +540,7 @@ class DataModel(QAbstractItemModel):
             return QVariant()
 
     def headerData(self, section, orientation, role):
-        if role == QtCore.Qt.DisplayRole and orientation == QtCore.Qt.Horizontal:
+        if role == QtCore.Qt.ItemDataRole.DisplayRole and orientation == QtCore.Qt.Orientation.Horizontal:
             if section < 0 or section >= len(column_names):
                 return QVariant()
             return column_names[section]
@@ -559,7 +561,7 @@ class FilterModel(QSortFilterProxyModel):
         idx = self.sourceModel().index(sourceRow, NAME_COLUMN, sourceParent)
         if not idx.isValid():
             return False
-        record = self.sourceModel().data(idx, QtCore.Qt.UserRole + 1)
+        record = self.sourceModel().data(idx, QtCore.Qt.ItemDataRole.UserRole + 1)
 
         if self.individual_time is not None and self.individual_time > record.individual_time:
             return False
@@ -590,7 +592,7 @@ class FilterModel(QSortFilterProxyModel):
             return False
 
         return True
-    
+
     def check_name(self, search_type, needle, name):
         if search_type == SEARCH_EXACT:
             return needle == name
@@ -657,7 +659,7 @@ class FilterModel(QSortFilterProxyModel):
                 idx = self.index(r, NAME_COLUMN, p)
                 if not idx.isValid():
                     continue
-                v = self.data(idx, QtCore.Qt.DisplayRole)
+                v = self.data(idx, QtCore.Qt.ItemDataRole.DisplayRole)
                 if self.check_name(search_type, value, v):
                     result.append(idx)
 
@@ -698,7 +700,7 @@ class TreeView(QWidget):
         self.window = parent
         self.tree = QTreeView(self)
         indent = self.tree.indentation()
-        self.tree.setIndentation(indent / 2)
+        self.tree.setIndentation(math.floor(indent / 2))
 
         self.model = DataModel(table)
         self.sorter = sorter = FilterModel(self)
@@ -706,7 +708,7 @@ class TreeView(QWidget):
         self.tree.setModel(sorter)
         for col in range(3,9):
             self.tree.setItemDelegateForColumn(col, PercentDelegate(self))
-        self.tree.header().setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.tree.header().setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.header().customContextMenuRequested.connect(self._on_header_menu)
         self.tree.setSortingEnabled(True)
         self.tree.setAutoExpandDelay(0)
@@ -715,7 +717,7 @@ class TreeView(QWidget):
         self.tree.expand(self.sorter.index(0,0))
         #self.tree.expandAll()
 
-        self.tree.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.tree.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._on_tree_menu)
 
         searchbox = QHBoxLayout()
@@ -795,7 +797,7 @@ class TreeView(QWidget):
             idxs.append(parent)
         #print(idxs)
         for idx in reversed(idxs[:-1]):
-            data = self.sorter.data(idx, QtCore.Qt.DisplayRole)
+            data = self.sorter.data(idx, QtCore.Qt.ItemDataRole.DisplayRole)
             #print(data)
             self.tree.expand(idx)
 
@@ -808,9 +810,9 @@ class TreeView(QWidget):
         start = self.sorter.index(0,NAME_COLUMN)
         search_type = self.search_type.currentData()
         if search_type == SEARCH_EXACT:
-            method = QtCore.Qt.MatchFixedString 
+            method = QtCore.Qt.MatchFlag.MatchFixedString
         elif search_type == SEARCH_CONTAINS:
-            method = QtCore.Qt.MatchContains
+            method = QtCore.Qt.MatchFlag.MatchContains
         else:
             method = QtCore.Qt.MatchRegExp
 
@@ -828,8 +830,8 @@ class TreeView(QWidget):
         self.tree.resizeColumnToContents(NAME_COLUMN)
         self._expand_to(idx)
         self.tree.setCurrentIndex(idx)
-        #self.tree.selectionModel().select(idx, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Current | QItemSelectionModel.Rows)
-        #self.tree.scrollTo(idx, QAbstractItemView.PositionAtCenter)
+        #self.tree.selectionModel().select(idx, QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Current | QItemSelectionModel.SelectionFlag.Rows)
+        #self.tree.scrollTo(idx, QAbstractItemView.ScrollHint.PositionAtCenter)
 
     def _on_search_next(self):
         if self._search_idxs:
@@ -849,17 +851,17 @@ class TreeView(QWidget):
 
     def _on_header_menu(self, pos):
         menu = make_header_menu(self.tree)
-        menu.exec_(self.mapToGlobal(pos))
+        menu.exec(self.mapToGlobal(pos))
 
     def _on_tree_menu(self, pos):
         index = self.tree.indexAt(pos)
         #print("index: {}".format(index))
         if index.isValid():
-            record = self.sorter.data(index, QtCore.Qt.UserRole + 1)
+            record = self.sorter.data(index, QtCore.Qt.ItemDataRole.UserRole + 1)
             #print("okay?..")
             #print("context: {}".format(record))
             menu = self.window.make_item_menu(self.model, record)
-            menu.exec_(self.tree.viewport().mapToGlobal(pos))
+            menu.exec(self.tree.viewport().mapToGlobal(pos))
 
 class Viewer(QMainWindow):
     def __init__(self, table):
@@ -907,7 +909,7 @@ if __name__ == "__main__":
 #     Record.insert(root, [Record.new(3), Record.new(4), Record.new(54, name="5")])
 #     root.flatten()
 #     print_table([root])
-# 
+#
 #     new_root = root.forward_tree(Record.new(4))
 #     print_table([new_root])
 
@@ -919,5 +921,5 @@ if __name__ == "__main__":
     window = Viewer(table[0])
     window.show()
 
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
 
