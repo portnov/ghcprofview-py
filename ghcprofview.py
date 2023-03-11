@@ -446,7 +446,7 @@ class PercentDelegate(QStyledItemDelegate):
             return
 
         painter.save()
-        if option.state & QStyle.State_Selected:
+        if option.state & QStyle.StateFlag.State_Selected:
             painter.fillRect(option.rect, option.palette.highlight())
         else:
             painter.fillRect(option.rect, option.palette.base())
@@ -521,16 +521,16 @@ class DataModel(QAbstractItemModel):
         item = index.internalPointer()
         #print("data({}, {}) = {}".format(index.row(), index.column(), item))
 
-        if role == QtCore.Qt.UserRole:
+        if role == QtCore.Qt.ItemDataRole.UserRole:
             return item.data(index.column())
-        elif role == QtCore.Qt.DisplayRole:
+        elif role == QtCore.Qt.ItemDataRole.DisplayRole:
             value = item.data(index.column())
             if isinstance(value, float):
                 value = round(value, 2)
             if not isinstance(value, (int, float, str)) and value is not None:
                 value = str(value)
             return value
-        elif role == QtCore.Qt.UserRole + 1:
+        elif role == QtCore.Qt.ItemDataRole.UserRole + 1:
             #print("in data")
             #print("in data: {}".format(item))
             return item
@@ -538,7 +538,7 @@ class DataModel(QAbstractItemModel):
             return QVariant()
 
     def headerData(self, section, orientation, role):
-        if role == QtCore.Qt.DisplayRole and orientation == QtCore.Qt.Horizontal:
+        if role == QtCore.Qt.ItemDataRole.DisplayRole and orientation == QtCore.Qt.Orientation.Horizontal:
             if section < 0 or section >= len(column_names):
                 return QVariant()
             return column_names[section]
@@ -559,7 +559,7 @@ class FilterModel(QSortFilterProxyModel):
         idx = self.sourceModel().index(sourceRow, NAME_COLUMN, sourceParent)
         if not idx.isValid():
             return False
-        record = self.sourceModel().data(idx, QtCore.Qt.UserRole + 1)
+        record = self.sourceModel().data(idx, QtCore.Qt.ItemDataRole.UserRole + 1)
 
         if self.individual_time is not None and self.individual_time > record.individual_time:
             return False
@@ -590,7 +590,7 @@ class FilterModel(QSortFilterProxyModel):
             return False
 
         return True
-    
+
     def check_name(self, search_type, needle, name):
         if search_type == SEARCH_EXACT:
             return needle == name
@@ -657,7 +657,7 @@ class FilterModel(QSortFilterProxyModel):
                 idx = self.index(r, NAME_COLUMN, p)
                 if not idx.isValid():
                     continue
-                v = self.data(idx, QtCore.Qt.DisplayRole)
+                v = self.data(idx, QtCore.Qt.ItemDataRole.DisplayRole)
                 if self.check_name(search_type, value, v):
                     result.append(idx)
 
@@ -706,7 +706,7 @@ class TreeView(QWidget):
         self.tree.setModel(sorter)
         for col in range(3,9):
             self.tree.setItemDelegateForColumn(col, PercentDelegate(self))
-        self.tree.header().setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.tree.header().setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.header().customContextMenuRequested.connect(self._on_header_menu)
         self.tree.setSortingEnabled(True)
         self.tree.setAutoExpandDelay(0)
@@ -715,7 +715,7 @@ class TreeView(QWidget):
         self.tree.expand(self.sorter.index(0,0))
         #self.tree.expandAll()
 
-        self.tree.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.tree.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._on_tree_menu)
 
         searchbox = QHBoxLayout()
@@ -795,7 +795,7 @@ class TreeView(QWidget):
             idxs.append(parent)
         #print(idxs)
         for idx in reversed(idxs[:-1]):
-            data = self.sorter.data(idx, QtCore.Qt.DisplayRole)
+            data = self.sorter.data(idx, QtCore.Qt.ItemDataRole.DisplayRole)
             #print(data)
             self.tree.expand(idx)
 
@@ -808,9 +808,9 @@ class TreeView(QWidget):
         start = self.sorter.index(0,NAME_COLUMN)
         search_type = self.search_type.currentData()
         if search_type == SEARCH_EXACT:
-            method = QtCore.Qt.MatchFixedString 
+            method = QtCore.Qt.MatchFlag.MatchFixedString
         elif search_type == SEARCH_CONTAINS:
-            method = QtCore.Qt.MatchContains
+            method = QtCore.Qt.MatchFlag.MatchContains
         else:
             method = QtCore.Qt.MatchRegExp
 
@@ -828,8 +828,8 @@ class TreeView(QWidget):
         self.tree.resizeColumnToContents(NAME_COLUMN)
         self._expand_to(idx)
         self.tree.setCurrentIndex(idx)
-        #self.tree.selectionModel().select(idx, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Current | QItemSelectionModel.Rows)
-        #self.tree.scrollTo(idx, QAbstractItemView.PositionAtCenter)
+        #self.tree.selectionModel().select(idx, QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Current | QItemSelectionModel.SelectionFlag.Rows)
+        #self.tree.scrollTo(idx, QAbstractItemView.ScrollHint.PositionAtCenter)
 
     def _on_search_next(self):
         if self._search_idxs:
@@ -855,7 +855,7 @@ class TreeView(QWidget):
         index = self.tree.indexAt(pos)
         #print("index: {}".format(index))
         if index.isValid():
-            record = self.sorter.data(index, QtCore.Qt.UserRole + 1)
+            record = self.sorter.data(index, QtCore.Qt.ItemDataRole.UserRole + 1)
             #print("okay?..")
             #print("context: {}".format(record))
             menu = self.window.make_item_menu(self.model, record)
@@ -907,7 +907,7 @@ if __name__ == "__main__":
 #     Record.insert(root, [Record.new(3), Record.new(4), Record.new(54, name="5")])
 #     root.flatten()
 #     print_table([root])
-# 
+#
 #     new_root = root.forward_tree(Record.new(4))
 #     print_table([new_root])
 
