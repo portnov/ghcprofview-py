@@ -4,10 +4,10 @@ import sys
 import re
 import traceback
 
-from PyQt5.QtGui import QPainter, QPixmap, QIcon, QStandardItemModel, QStandardItem, QColor
-from PyQt5 import QtCore
-from PyQt5.QtCore import QRect, QSize, Qt, QObject, QTimer, pyqtSignal, QSettings, QModelIndex, QVariant, QAbstractItemModel, QSortFilterProxyModel, QItemSelectionModel
-from PyQt5.QtWidgets import QApplication, QWidget, QToolBar, QMainWindow, \
+from PyQt6.QtGui import QPainter, QPixmap, QIcon, QStandardItemModel, QStandardItem, QColor
+from PyQt6 import QtCore
+from PyQt6.QtCore import QRect, QSize, Qt, QObject, QTimer, pyqtSignal, QSettings, QModelIndex, QVariant, QAbstractItemModel, QSortFilterProxyModel, QItemSelectionModel
+from PyQt6.QtWidgets import QApplication, QWidget, QToolBar, QMainWindow, \
         QDialog, QVBoxLayout, QHBoxLayout, QAction, QActionGroup, QLabel, QFileDialog, \
         QFrame, QDockWidget, QMessageBox, QListWidget, QListWidgetItem, QMenu, \
         QSpinBox, QComboBox, \
