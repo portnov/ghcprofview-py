@@ -3,6 +3,7 @@
 import sys
 import re
 import traceback
+import math
 
 from PyQt6.QtGui import QPainter, QPixmap, QIcon, QStandardItemModel, QStandardItem, QColor, \
         QAction, QActionGroup
@@ -435,9 +436,9 @@ def percent_color(value):
     if value >= 1:
         return one
 
-    return QColor((1 - value) * zero.red() + value * one.red(),
-                  (1 - value) * zero.green() + value * one.green(),
-                  (1 - value) * zero.blue() + value * one.blue())
+    return QColor(math.floor((1 - value) * zero.red() + value * one.red()),
+                  math.floor((1 - value) * zero.green() + value * one.green()),
+                  math.floor((1 - value) * zero.blue() + value * one.blue()))
 
 class PercentDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
@@ -457,7 +458,7 @@ class PercentDelegate(QStyledItemDelegate):
             percent = 0
         if percent > 100:
             percent = 100
-        w = option.rect.width() * percent / 100
+        w = math.floor(option.rect.width() * percent / 100)
         color = percent_color(percent / 100)
         painter.fillRect(option.rect.x(), option.rect.y(), w, option.rect.height(), color)
         painter.drawText(option.rect, 0, str(value) + " %")
@@ -699,7 +700,7 @@ class TreeView(QWidget):
         self.window = parent
         self.tree = QTreeView(self)
         indent = self.tree.indentation()
-        self.tree.setIndentation(indent / 2)
+        self.tree.setIndentation(math.floor(indent / 2))
 
         self.model = DataModel(table)
         self.sorter = sorter = FilterModel(self)
